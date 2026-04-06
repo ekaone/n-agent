@@ -28,6 +28,7 @@ const convo = createConversation(bus, {
   participants: ["optimist", "skeptic"],
   topic: "Will AI make software developers more productive?",
   maxTurns: 6,
+  delayMs: 2000,
 
   onToken: (chunk, speaker) => {
     process.stdout.write(chunk);

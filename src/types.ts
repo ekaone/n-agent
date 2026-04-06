@@ -74,6 +74,7 @@ export type ConversationOptions = {
   maxTurns?: number; // hard cap, default: 10
   stopSequence?: string; // e.g. '[DONE]' — auto-calls stop()
   pauseCondition?: (ctx: TurnContext) => boolean;
+  delayMs?: number; // optional delay between turns (ms)
   onToken?: (chunk: string, speaker: string) => void;
   onTurnComplete?: (turn: ChatMessage) => void;
   onStateChange?: (state: LoopState) => void;

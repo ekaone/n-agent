@@ -21,6 +21,7 @@ export function createConversation(
     maxTurns = 10,
     stopSequence,
     pauseCondition,
+    delayMs = 0,
     onToken,
     onTurnComplete,
     onStateChange,
@@ -58,6 +59,11 @@ export function createConversation(
 
   // Pending interrupt message — set by send() when state === 'streaming'
   let _pendingInterrupt: string | null = null;
+
+  // ─── Sleep helper ─────────────────────────────────────────────────────────
+
+  const sleep = (ms: number) =>
+    new Promise((resolve) => setTimeout(resolve, ms));
 
   // ─── State helpers ────────────────────────────────────────────────────────
 
@@ -181,6 +187,11 @@ export function createConversation(
       }
 
       if (_stopped) break;
+
+      // ── Delay between turns (if configured) ───────────────────────────────
+      if (delayMs > 0 && turnIndex < maxTurns - 1) {
+        await sleep(delayMs);
+      }
 
       // ── Pause condition check ─────────────────────────────────────────────
       // Fires after each LLM turn. If true, wait for human input before
