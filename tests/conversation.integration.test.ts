@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { createChatBus } from "../src/bus.js";
 import { createConversation } from "../src/conversation.js";
 import { aiSdkAdapter } from "../src/adapters/ai-sdk.js";
@@ -244,7 +244,12 @@ describe("AI SDK Mock Integration", () => {
 
 describe.skipIf(!process.env.REAL_API)("Real API Integration", () => {
   it("can run with actual Anthropic API", async () => {
-    // This only runs if REAL_API=1 is set
+    /**
+     *
+     *  This only runs if REAL_API=1 is set
+     *  REAL_API=1 pnpm test
+     *
+     * */
     const { anthropicAdapter } = await import("../src/adapters/anthropic.js");
 
     const bus = makeBus([
