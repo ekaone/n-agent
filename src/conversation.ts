@@ -60,6 +60,9 @@ export function createConversation(
   // Pending interrupt message — set by send() when state === 'streaming'
   let _pendingInterrupt: string | null = null;
 
+  // Pending message sent during idle/between-turns delay
+  let _pendingIdleMessage: string | null = null;
+
   // ─── Sleep helper ─────────────────────────────────────────────────────────
 
   const sleep = (ms: number) =>
@@ -122,7 +125,9 @@ export function createConversation(
       if (agent.type === "human") {
         const humanMsg = await waitForHuman();
         if (_stopped) break;
-        appendHuman(humanMsg, turnIndex);
+        if (humanMsg.trim()) {
+          appendHuman(humanMsg, turnIndex);
+        }
         continue;
       }
 
@@ -190,7 +195,14 @@ export function createConversation(
 
       // ── Delay between turns (if configured) ───────────────────────────────
       if (delayMs > 0 && turnIndex < maxTurns - 1) {
+        setState("idle");
         await sleep(delayMs);
+        // Check if user sent a message during the delay
+        if (_pendingIdleMessage !== null) {
+          appendHuman(_pendingIdleMessage, turnIndex);
+          _pendingIdleMessage = null;
+          if (_stopped) break;
+        }
       }
 
       // ── Pause condition check ─────────────────────────────────────────────
@@ -206,7 +218,10 @@ export function createConversation(
         if (pauseCondition(ctx)) {
           const humanMsg = await waitForHuman();
           if (_stopped) break;
-          appendHuman(humanMsg, turnIndex);
+          // Only append if user typed something (interactive mode: empty = skip)
+          if (humanMsg.trim()) {
+            appendHuman(humanMsg, turnIndex);
+          }
         }
       }
     }
@@ -220,6 +235,7 @@ export function createConversation(
   // send() handles all three loop states:
   //   'streaming'      → interrupt (abort current LLM turn, inject message)
   //   'awaiting-human' → inject (loop is already waiting)
+  //   'idle'           → store for injection after delay/between turns
   //   anything else    → no-op, returns early
   function send(message: string): SendResult {
     if (_state === "streaming") {
@@ -237,7 +253,12 @@ export function createConversation(
       return { intent: "inject", turnIndex: -1 };
     }
 
-    // idle or stopped — nothing to do
+    if (_state === "idle") {
+      _pendingIdleMessage = message;
+      return { intent: "inject", turnIndex: -1 };
+    }
+
+    // stopped — nothing to do
     return { intent: "inject", turnIndex: -1 };
   }
 

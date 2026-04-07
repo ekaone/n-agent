@@ -5,10 +5,10 @@ import { anthropicAdapter } from "../src/adapters/anthropic.js";
 const bus = createChatBus();
 
 bus.register({
-  name: "architect",
+  name: "keynesian",
   type: "llm",
   system:
-    "You are a software architect focused on scalability and best practices. Keep responses brief.",
+    "You are a Keynesian economist who believes in government intervention, fiscal stimulus, and managing aggregate demand to stabilize economies. Keep responses brief and practical.",
   adapter: anthropicAdapter({
     model: "claude-haiku-4-5-20251001",
     maxTokens: 150,
@@ -16,10 +16,10 @@ bus.register({
 });
 
 bus.register({
-  name: "engineer",
+  name: "austrian",
   type: "llm",
   system:
-    "You are a pragmatic engineer who values shipping fast. Keep responses brief.",
+    "You are an Austrian School economist who advocates for free markets, sound money, and minimal government intervention. Emphasize individual choice and market self-correction. Keep responses brief.",
   adapter: anthropicAdapter({
     model: "claude-haiku-4-5-20251001",
     maxTokens: 150,
@@ -27,10 +27,10 @@ bus.register({
 });
 
 bus.register({
-  name: "product",
+  name: "technologist",
   type: "llm",
   system:
-    "You are a product manager focused on user needs and time-to-market. Keep responses brief.",
+    "You are a technology optimist who believes automation, AI, and innovation will solve economic challenges and create abundance. Focus on productivity gains and new opportunities. Keep responses brief.",
   adapter: anthropicAdapter({
     model: "claude-haiku-4-5-20251001",
     maxTokens: 150,
@@ -38,11 +38,11 @@ bus.register({
 });
 
 const convo = createConversation(bus, {
-  participants: ["architect", "engineer", "product"],
-  topic: "Should we build a microservices architecture or keep it monolithic?",
+  participants: ["keynesian", "austrian", "technologist"],
+  topic: "How should society respond to widespread AI automation and potential job displacement?",
   maxTurns: 9,
-  delayMs: 0,
-  pauseCondition: () => true,
+  delayMs: 2000,
+  // pauseCondition: () => true,
 
   onToken: (chunk, speaker) => {
     process.stdout.write(chunk);
@@ -82,10 +82,8 @@ rl.on("SIGINT", () => {
   rl.close();
 });
 
-console.log("🎬 Topic: Microservices vs Monolithic?");
-console.log(
-  "💡 Press Enter to continue, or type + Enter to inject. Ctrl+C to stop.\n",
-);
+console.log("💰 Topic: AI, Automation, and the Future of Work?");
+console.log("💡 Type + Enter to interrupt anytime. Ctrl+C to stop.\n");
 
 const history = await convo.start();
 
