@@ -1,7 +1,7 @@
 {
   "name": "@ekaone/n-agent",
   "version": "0.0.1",
-  "description": "N-Agent is Multi-agent conversation loop with human-in-the-loop support.",
+  "description": "Multi-agent conversation loop with human-in-the-loop support.",
   "keywords": [
     "agent",
     "typescript",
