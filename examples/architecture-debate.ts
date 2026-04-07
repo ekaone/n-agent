@@ -1,5 +1,8 @@
-import * as readline from "node:readline";
-import { createChatBus, createConversation } from "../src/index.js";
+import {
+  attachInteractiveConsole,
+  createChatBus,
+  createConversation,
+} from "../src/index.js";
 import { anthropicAdapter } from "../src/adapters/anthropic.js";
 
 const bus = createChatBus();
@@ -59,28 +62,7 @@ const convo = createConversation(bus, {
   },
 });
 
-const rl = readline.createInterface({
-  input: process.stdin,
-  output: process.stdout,
-});
-
-rl.on("line", (input) => {
-  const msg = input.trim();
-  const result = convo.send(msg);
-  if (msg) {
-    if (result.intent === "interrupt") {
-      console.log("\n⚡ Interrupted — your message injected.");
-    } else {
-      console.log("\n💬 Message injected.");
-    }
-  }
-});
-
-rl.on("SIGINT", () => {
-  console.log("\n🛑 Stopping...");
-  convo.stop();
-  rl.close();
-});
+const rl = attachInteractiveConsole(convo);
 
 console.log("🎬 Topic: Microservices vs Monolithic?");
 console.log(

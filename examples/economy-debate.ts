@@ -1,8 +1,29 @@
-import * as readline from "node:readline";
-import { createChatBus, createConversation } from "../src/index.js";
+import {
+  attachInteractiveConsole,
+  createChatBus,
+  createConversation,
+} from "../src/index.js";
 import { anthropicAdapter } from "../src/adapters/anthropic.js";
 
+// ANSI color codes for participants
+const colors: Record<string, string> = {
+  keynesian: "\x1b[36m", // Cyan
+  austrian: "\x1b[35m", // Magenta
+  technologist: "\x1b[33m", // Yellow
+  human: "\x1b[32m", // Green
+  reset: "\x1b[0m",
+};
+
+function colorize(name: string): string {
+  const c = colors[name] || "";
+  return `${c}[${name}]${colors.reset}`;
+}
+
 const bus = createChatBus();
+
+// Track current speaker for coloring
+let currentSpeaker = "";
+let firstToken = true;
 
 bus.register({
   name: "keynesian",
@@ -39,12 +60,21 @@ bus.register({
 
 const convo = createConversation(bus, {
   participants: ["keynesian", "austrian", "technologist"],
-  topic: "How should society respond to widespread AI automation and potential job displacement?",
+  topic:
+    "How should society respond to widespread AI automation and potential job displacement?",
   maxTurns: 9,
   delayMs: 2000,
   // pauseCondition: () => true,
 
   onToken: (chunk, speaker) => {
+    if (speaker !== currentSpeaker) {
+      currentSpeaker = speaker;
+      firstToken = true;
+    }
+    if (firstToken) {
+      process.stdout.write(`\n${colorize(speaker)} `);
+      firstToken = false;
+    }
     process.stdout.write(chunk);
   },
 
@@ -59,28 +89,7 @@ const convo = createConversation(bus, {
   },
 });
 
-const rl = readline.createInterface({
-  input: process.stdin,
-  output: process.stdout,
-});
-
-rl.on("line", (input) => {
-  const msg = input.trim();
-  const result = convo.send(msg);
-  if (msg) {
-    if (result.intent === "interrupt") {
-      console.log("\n⚡ Interrupted — your message injected.");
-    } else {
-      console.log("\n💬 Message injected.");
-    }
-  }
-});
-
-rl.on("SIGINT", () => {
-  console.log("\n🛑 Stopping...");
-  convo.stop();
-  rl.close();
-});
+const rl = attachInteractiveConsole(convo);
 
 console.log("💰 Topic: AI, Automation, and the Future of Work?");
 console.log("💡 Type + Enter to interrupt anytime. Ctrl+C to stop.\n");

@@ -8,6 +8,8 @@
 
 export { createChatBus } from "./bus.js";
 export { createConversation } from "./conversation.js";
+export { attachInteractiveConsole } from "./cli.js";
+export type { InteractiveConfig } from "./cli.js";
 
 export type {
   AgentAdapter,
