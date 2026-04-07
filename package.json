@@ -1,6 +1,6 @@
 {
   "name": "@ekaone/n-agent",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Multi-agent conversation loop with human-in-the-loop support.",
   "keywords": [
     "agent",
@@ -61,9 +61,6 @@
     "test:watch": "vitest",
     "test:ui": "vitest --ui",
     "test:coverage": "vitest run --coverage"
-  },
-  "dependencies": {
-    "zod": "4.3.6"
   },
   "peerDependencies": {
     "ai": ">=6.0.146",
