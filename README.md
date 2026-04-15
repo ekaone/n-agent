@@ -95,6 +95,27 @@ const convo = createConversation(bus, {
 });
 ```
 
+### Events (recommended)
+
+`createConversation()` returns a handle that can emit typed events. This is the easiest way to attach multiple independent listeners (CLI output, logging, persistence, UI) without composing callbacks.
+
+```typescript
+const convo = createConversation(bus, {
+  participants: ["agent1", "agent2"],
+  topic: "Discussion topic",
+  maxTurns: 10,
+});
+
+// Stream tokens
+convo.on("token", ({ chunk }) => process.stdout.write(chunk));
+
+// Turn boundaries
+convo.on("turnComplete", ({ turn }) => console.log(`\n---\n${turn.speaker}: ${turn.content}`));
+
+// State changes
+convo.on("state", ({ state }) => console.log("State:", state));
+```
+
 #### ConversationOptions
 
 | Option | Type | Default | Description |
@@ -108,6 +129,8 @@ const convo = createConversation(bus, {
 | `onToken` | `(chunk: string, speaker: string) => void` | — | Called for each token streamed from LLM |
 | `onTurnComplete` | `(turn: ChatMessage) => void` | — | Called when a turn finishes |
 | `onStateChange` | `(state: LoopState) => void` | — | Called when conversation state changes |
+
+Note: the callback options above are still supported for backward compatibility, but events are preferred if you need more than one listener.
 
 ### `attachInteractiveConsole(convo, config?)`
 

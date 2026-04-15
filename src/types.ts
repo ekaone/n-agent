@@ -80,6 +80,30 @@ export type ConversationOptions = {
   onStateChange?: (state: LoopState) => void;
 };
 
+// ─── Conversation Events ──────────────────────────────────────────────────────
+
+export type ConversationStoppedReason = "maxTurns" | "stop" | "stopSequence";
+export type HumanAwaitingReason = "humanTurn" | "pauseCondition";
+
+export type ConversationEventMap = {
+  state: { state: LoopState };
+  token: { speaker: string; chunk: string; turnIndex: number };
+  turnStart: { speaker: string; turnIndex: number };
+  turnComplete: { turn: ChatMessage };
+  humanAwaiting: { turnIndex: number; reason: HumanAwaitingReason };
+  stopped: { reason: ConversationStoppedReason; turnIndex: number | null };
+  error: { error: unknown; speaker?: string; turnIndex?: number };
+};
+
+export type ConversationEventName = keyof ConversationEventMap;
+
+export type ConversationEvent<K extends ConversationEventName = ConversationEventName> =
+  { name: K } & ConversationEventMap[K];
+
+export type ConversationEventHandler<K extends ConversationEventName> = (
+  payload: ConversationEventMap[K],
+) => void;
+
 // ─── Conversation Handle
 // What createConversation() returns.
 
@@ -89,4 +113,17 @@ export type ConversationHandle = {
   stop(): void;
   readonly state: LoopState;
   readonly history: ChatMessage[];
+
+  on<K extends ConversationEventName>(
+    event: K,
+    handler: ConversationEventHandler<K>,
+  ): () => void;
+  off<K extends ConversationEventName>(
+    event: K,
+    handler: ConversationEventHandler<K>,
+  ): void;
+  once<K extends ConversationEventName>(
+    event: K,
+    handler: ConversationEventHandler<K>,
+  ): () => void;
 };

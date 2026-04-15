@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import type {
   ChatMessage,
   ConversationOptions,
@@ -6,10 +5,14 @@ import type {
   LoopState,
   SendResult,
   TurnContext,
+  ConversationEventMap,
+  ConversationStoppedReason,
+  HumanAwaitingReason,
 } from "./types.js";
 import type { ChatBus } from "./bus.js";
 import { createMessageStore } from "./history.js";
 import { createAbortManager } from "./manager.js";
+import { createTypedEmitter } from "./emitter.js";
 
 export function createConversation(
   bus: ChatBus,
@@ -47,9 +50,12 @@ export function createConversation(
 
   const store = createMessageStore();
   const manager = createAbortManager();
+  const events = createTypedEmitter<ConversationEventMap>();
 
   let _state: LoopState = "idle";
   let _stopped = false;
+  let _stopReason: ConversationStoppedReason | null = null;
+  let _stopTurnIndex: number | null = null;
 
   // The promise/resolve pair for human input (inject or interrupt).
   // When the loop needs human input, it awaits _humanInputPromise.
@@ -72,14 +78,19 @@ export function createConversation(
 
   function setState(next: LoopState) {
     _state = next;
+    events.emit("state", { state: next });
     onStateChange?.(next);
   }
 
-  function waitForHuman(): Promise<string> {
+  function waitForHuman(
+    reason: HumanAwaitingReason,
+    turnIndex: number,
+  ): Promise<string> {
     _humanInputPromise = new Promise<string>((resolve) => {
       _humanInputResolve = resolve;
     });
     setState("awaiting-human");
+    events.emit("humanAwaiting", { reason, turnIndex });
     return _humanInputPromise;
   }
 
@@ -123,7 +134,7 @@ export function createConversation(
 
       // ── Human turn ────────────────────────────────────────────────────────
       if (agent.type === "human") {
-        const humanMsg = await waitForHuman();
+        const humanMsg = await waitForHuman("humanTurn", turnIndex);
         if (_stopped) break;
         if (humanMsg.trim()) {
           appendHuman(humanMsg, turnIndex);
@@ -132,6 +143,7 @@ export function createConversation(
       }
 
       // ── LLM turn ──────────────────────────────────────────────────────────
+      events.emit("turnStart", { speaker: speakerName, turnIndex });
       setState("streaming");
 
       const projected = store.project(speakerName, agent.system);
@@ -139,6 +151,7 @@ export function createConversation(
 
       let accumulated = "";
       let wasAborted = false;
+      let fatalError: unknown = null;
 
       try {
         for await (const chunk of agent.adapter!.generate(
@@ -146,12 +159,15 @@ export function createConversation(
           controller.signal,
         )) {
           accumulated += chunk;
+          events.emit("token", { speaker: speakerName, chunk, turnIndex });
           onToken?.(chunk, speakerName);
 
           // Stop-sequence detection — strip it before saving.
           if (stopSequence && accumulated.includes(stopSequence)) {
             accumulated = accumulated.replace(stopSequence, "").trimEnd();
             _stopped = true;
+            _stopReason = "stopSequence";
+            _stopTurnIndex = turnIndex;
             break;
           }
 
@@ -164,11 +180,21 @@ export function createConversation(
       } catch (err: unknown) {
         // AbortError is expected — a human interrupted mid-stream.
         const isAbort = err instanceof Error && err.name === "AbortError";
-        if (!isAbort) throw err;
-        wasAborted = true;
+        if (isAbort) {
+          wasAborted = true;
+        } else {
+          fatalError = err;
+        }
       }
 
       manager.release(turnIndex);
+
+      if (fatalError !== null) {
+        events.emit("error", { error: fatalError, speaker: speakerName, turnIndex });
+        _stopped = true;
+        if (_stopReason === null) _stopReason = "stop";
+        if (_stopTurnIndex === null) _stopTurnIndex = turnIndex;
+      }
 
       // Commit the turn — partial if aborted or interrupted.
       const isPartial = wasAborted || _pendingInterrupt !== null;
@@ -181,6 +207,7 @@ export function createConversation(
         ...(isPartial ? { partial: true } : {}),
       });
 
+      events.emit("turnComplete", { turn });
       onTurnComplete?.(turn);
 
       // If a human interrupted mid-stream, inject their message now.
@@ -216,7 +243,7 @@ export function createConversation(
           history: store.all(),
         };
         if (pauseCondition(ctx)) {
-          const humanMsg = await waitForHuman();
+          const humanMsg = await waitForHuman("pauseCondition", turnIndex);
           if (_stopped) break;
           // Only append if user typed something (interactive mode: empty = skip)
           if (humanMsg.trim()) {
@@ -227,6 +254,10 @@ export function createConversation(
     }
 
     setState("stopped");
+    if (_stopReason === null) {
+      _stopReason = _stopped ? "stop" : "maxTurns";
+    }
+    events.emit("stopped", { reason: _stopReason, turnIndex: _stopTurnIndex });
     return store.all();
   }
 
@@ -264,6 +295,8 @@ export function createConversation(
 
   function stop(): void {
     _stopped = true;
+    if (_stopReason === null) _stopReason = "stop";
+    if (_stopTurnIndex === null) _stopTurnIndex = manager.activeTurnIndex();
     manager.abort();
     // If the loop is waiting for human input, resolve with empty string
     // so the await unblocks. The loop checks _stopped immediately after.
@@ -278,6 +311,9 @@ export function createConversation(
     start,
     send,
     stop,
+    on: events.on,
+    off: events.off,
+    once: events.once,
     get state() {
       return _state;
     },
