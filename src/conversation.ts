@@ -8,6 +8,7 @@ import type {
   ConversationEventMap,
   ConversationStoppedReason,
   HumanAwaitingReason,
+  RetryContext,
 } from "./types.js";
 import type { ChatBus } from "./bus.js";
 import { createMessageStore } from "./history.js";
@@ -57,22 +58,36 @@ export function createConversation(
   let _stopReason: ConversationStoppedReason | null = null;
   let _stopTurnIndex: number | null = null;
 
-  // The promise/resolve pair for human input (inject or interrupt).
-  // When the loop needs human input, it awaits _humanInputPromise.
-  // When send() is called, it resolves _humanInputResolve.
   let _humanInputResolve: ((msg: string) => void) | null = null;
   let _humanInputPromise: Promise<string> | null = null;
 
-  // Pending interrupt message — set by send() when state === 'streaming'
   let _pendingInterrupt: string | null = null;
-
-  // Pending message sent during idle/between-turns delay
   let _pendingIdleMessage: string | null = null;
 
-  // ─── Sleep helper ─────────────────────────────────────────────────────────
+  // ─── Retry config ─────────────────────────────────────────────────────────
 
-  const sleep = (ms: number) =>
-    new Promise((resolve) => setTimeout(resolve, ms));
+  const retryMaxAttempts = options.retry?.maxAttempts ?? 1;
+  const retryBackoff     = options.retry?.backoff         ?? "exponential";
+  const retryInitialMs   = options.retry?.initialDelayMs  ?? 1000;
+  const retryMaxMs       = options.retry?.maxDelayMs      ?? 30_000;
+  const retryShouldRetry = options.retry?.shouldRetry     ?? (() => true);
+
+  function retryDelay(attempt: number): number {
+    const d = retryBackoff === "none"   ? 0
+            : retryBackoff === "linear" ? retryInitialMs * attempt
+            : /* exponential */           retryInitialMs * 2 ** (attempt - 1);
+    return Math.min(d, retryMaxMs);
+  }
+
+  // ─── Sleep helper (abortable) ─────────────────────────────────────────────
+
+  function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+    return new Promise((resolve) => {
+      if (signal?.aborted) return resolve();
+      const t = setTimeout(resolve, ms);
+      signal?.addEventListener("abort", () => { clearTimeout(t); resolve(); }, { once: true });
+    });
+  }
 
   // ─── State helpers ────────────────────────────────────────────────────────
 
@@ -118,12 +133,11 @@ export function createConversation(
       throw new Error("[agent-chat] Conversation has already started.");
     }
 
-    // Seed the conversation with the topic as an opening human message.
     store.append({
       speaker: "human",
       role: "user",
       content: topic,
-      turnIndex: -1, // pre-loop, not counted as a turn
+      turnIndex: -1,
     });
 
     for (let turnIndex = 0; turnIndex < maxTurns; turnIndex++) {
@@ -147,56 +161,82 @@ export function createConversation(
       setState("streaming");
 
       const projected = store.project(speakerName, agent.system);
-      const controller = manager.create(turnIndex);
 
       let accumulated = "";
-      let wasAborted = false;
+      let wasAborted  = false;
       let fatalError: unknown = null;
 
-      try {
-        for await (const chunk of agent.adapter!.generate(
-          projected,
-          controller.signal,
-        )) {
-          accumulated += chunk;
-          events.emit("token", { speaker: speakerName, chunk, turnIndex });
-          onToken?.(chunk, speakerName);
+      for (let attempt = 1; attempt <= retryMaxAttempts; attempt++) {
+        accumulated = "";
+        wasAborted  = false;
+        let turnError: unknown = null;
 
-          // Stop-sequence detection — strip it before saving.
-          if (stopSequence && accumulated.includes(stopSequence)) {
-            accumulated = accumulated.replace(stopSequence, "").trimEnd();
-            _stopped = true;
-            _stopReason = "stopSequence";
-            _stopTurnIndex = turnIndex;
-            break;
+        const controller = manager.create(turnIndex);
+
+        try {
+          for await (const chunk of agent.adapter!.generate(
+            projected,
+            controller.signal,
+          )) {
+            accumulated += chunk;
+            events.emit("token", { speaker: speakerName, chunk, turnIndex });
+            onToken?.(chunk, speakerName);
+
+            // Stop-sequence: mark stopped and break — never retry
+            if (stopSequence && accumulated.includes(stopSequence)) {
+              accumulated = accumulated.replace(stopSequence, "").trimEnd();
+              _stopped       = true;
+              _stopReason    = "stopSequence";
+              _stopTurnIndex = turnIndex;
+              break;
+            }
+
+            // Interrupt fast-path: never retry
+            if (_pendingInterrupt !== null) break;
           }
+        } catch (err: unknown) {
+          const isAbort = err instanceof Error && err.name === "AbortError";
+          if (isAbort) wasAborted = true;
+          else         turnError  = err;
+        }
 
-          // Mid-stream interrupt check.
-          // send() sets _pendingInterrupt and calls manager.abort(),
-          // which triggers the AbortError below. We check here too
-          // as a fast-path before the next chunk arrives.
-          if (_pendingInterrupt !== null) break;
+        manager.release(turnIndex);
+
+        // Clean exit: success, stop-sequence hit, or user abort — never retry
+        if (_stopped || wasAborted || turnError === null) break;
+
+        // Determine whether to retry
+        const isLast = attempt >= retryMaxAttempts;
+        if (isLast || !retryShouldRetry(turnError, attempt)) {
+          fatalError = turnError;
+          break;
         }
-      } catch (err: unknown) {
-        // AbortError is expected — a human interrupted mid-stream.
-        const isAbort = err instanceof Error && err.name === "AbortError";
-        if (isAbort) {
-          wasAborted = true;
-        } else {
-          fatalError = err;
-        }
+
+        // Fire retry event/hook before sleeping
+        const delay = retryDelay(attempt);
+        const retryCtx: RetryContext = {
+          speaker: speakerName,
+          turnIndex,
+          attempt,
+          maxAttempts: retryMaxAttempts,
+          error: turnError,
+          delayMs: delay,
+        };
+        events.emit("retry", retryCtx);
+        options.onRetry?.(retryCtx);
+
+        if (delay > 0) await sleep(delay, manager.signal());
+        if (_stopped) break; // stop() called during back-off sleep
       }
-
-      manager.release(turnIndex);
 
       if (fatalError !== null) {
         events.emit("error", { error: fatalError, speaker: speakerName, turnIndex });
         _stopped = true;
-        if (_stopReason === null) _stopReason = "stop";
+        if (_stopReason === null) _stopReason = "error";
         if (_stopTurnIndex === null) _stopTurnIndex = turnIndex;
       }
 
-      // Commit the turn — partial if aborted or interrupted.
+      // Commit the turn — partial if aborted or interrupted
       const isPartial = wasAborted || _pendingInterrupt !== null;
 
       const turn = store.append({
@@ -224,7 +264,6 @@ export function createConversation(
       if (delayMs > 0 && turnIndex < maxTurns - 1) {
         setState("idle");
         await sleep(delayMs);
-        // Check if user sent a message during the delay
         if (_pendingIdleMessage !== null) {
           appendHuman(_pendingIdleMessage, turnIndex);
           _pendingIdleMessage = null;
@@ -233,8 +272,6 @@ export function createConversation(
       }
 
       // ── Pause condition check ─────────────────────────────────────────────
-      // Fires after each LLM turn. If true, wait for human input before
-      // continuing. This does not consume a turn slot.
       if (pauseCondition) {
         const ctx: TurnContext = {
           turnIndex,
@@ -245,7 +282,6 @@ export function createConversation(
         if (pauseCondition(ctx)) {
           const humanMsg = await waitForHuman("pauseCondition", turnIndex);
           if (_stopped) break;
-          // Only append if user typed something (interactive mode: empty = skip)
           if (humanMsg.trim()) {
             appendHuman(humanMsg, turnIndex);
           }
@@ -263,14 +299,8 @@ export function createConversation(
 
   // ─── Public API ───────────────────────────────────────────────────────────
 
-  // send() handles all three loop states:
-  //   'streaming'      → interrupt (abort current LLM turn, inject message)
-  //   'awaiting-human' → inject (loop is already waiting)
-  //   'idle'           → store for injection after delay/between turns
-  //   anything else    → no-op, returns early
   function send(message: string): SendResult {
     if (_state === "streaming") {
-      // Store the message — the loop reads it after the AbortError is caught.
       _pendingInterrupt = message;
       manager.abort();
       return {
@@ -289,7 +319,6 @@ export function createConversation(
       return { intent: "inject", turnIndex: -1 };
     }
 
-    // stopped — nothing to do
     return { intent: "inject", turnIndex: -1 };
   }
 
@@ -298,8 +327,6 @@ export function createConversation(
     if (_stopReason === null) _stopReason = "stop";
     if (_stopTurnIndex === null) _stopTurnIndex = manager.activeTurnIndex();
     manager.abort();
-    // If the loop is waiting for human input, resolve with empty string
-    // so the await unblocks. The loop checks _stopped immediately after.
     if (_state === "awaiting-human") {
       resolveHuman("");
     }

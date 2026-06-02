@@ -41,7 +41,11 @@ export function createAbortManager() {
     return current?.turnIndex ?? null;
   }
 
-  return { create, abort, release, isStreaming, activeTurnIndex };
+  function signal(): AbortSignal | undefined {
+    return current?.controller.signal;
+  }
+
+  return { create, abort, release, isStreaming, activeTurnIndex, signal };
 }
 
 export type AbortManager = ReturnType<typeof createAbortManager>;
