@@ -114,6 +114,11 @@ convo.on("turnComplete", ({ turn }) => console.log(`\n---\n${turn.speaker}: ${tu
 
 // State changes
 convo.on("state", ({ state }) => console.log("State:", state));
+
+// Retry attempts (fires before each back-off sleep)
+convo.on("retry", ({ speaker, attempt, maxAttempts, error, delayMs }) => {
+  console.warn(`[${speaker}] attempt ${attempt}/${maxAttempts} failed — retrying in ${delayMs}ms`, error);
+});
 ```
 
 #### ConversationOptions
@@ -126,11 +131,30 @@ convo.on("state", ({ state }) => console.log("State:", state));
 | `delayMs` | `number` | `0` | Delay between turns in milliseconds |
 | `stopSequence` | `string` | — | String that triggers immediate stop when generated |
 | `pauseCondition` | `(ctx: TurnContext) => boolean` | — | Function to pause for human input |
+| `retry` | `RetryOptions` | — | Per-turn retry policy for transient LLM errors (see below) |
 | `onToken` | `(chunk: string, speaker: string) => void` | — | Called for each token streamed from LLM |
 | `onTurnComplete` | `(turn: ChatMessage) => void` | — | Called when a turn finishes |
 | `onStateChange` | `(state: LoopState) => void` | — | Called when conversation state changes |
+| `onRetry` | `(ctx: RetryContext) => void` | — | Called before each retry attempt |
 
 Note: the callback options above are still supported for backward compatibility, but events are preferred if you need more than one listener.
+
+#### RetryOptions
+
+Configure per-turn retry behaviour for transient errors (network blips, rate-limit 429s, etc.). Retry is **opt-in** — omitting `retry` preserves the original behaviour where any error immediately stops the conversation.
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `maxAttempts` | `number` | `1` | Total attempts including the first try. `1` means no retries. |
+| `backoff` | `"none" \| "linear" \| "exponential"` | `"exponential"` | Back-off strategy between attempts |
+| `initialDelayMs` | `number` | `1000` | Base delay in ms for the first retry |
+| `maxDelayMs` | `number` | `30000` | Upper bound on delay in ms |
+| `shouldRetry` | `(err: unknown, attempt: number) => boolean` | — | Return `false` to abort retrying early |
+
+**Back-off delay calculation:**
+- `"none"` — no delay between attempts
+- `"linear"` — `initialDelayMs × attempt` (e.g. 1 s, 2 s, 3 s, …)
+- `"exponential"` — `initialDelayMs × 2^(attempt−1)` (e.g. 1 s, 2 s, 4 s, …), capped at `maxDelayMs`
 
 ### `attachInteractiveConsole(convo, config?)`
 
@@ -213,7 +237,48 @@ await convo.start();  // Pauses when it's human's turn
 rl.close();
 ```
 
-### 4. Interrupt Mode
+### 4. Retry & Error Recovery Mode
+
+Automatically retry failed LLM turns with configurable back-off so transient errors don't kill a session.
+
+```typescript
+const convo = createConversation(bus, {
+  participants: ["agent1", "agent2"],
+  topic: "Let's discuss AI.",
+  maxTurns: 10,
+  retry: {
+    maxAttempts: 3,          // try up to 3 times per turn
+    backoff: "exponential",  // 1 s → 2 s between retries
+    initialDelayMs: 1000,
+    maxDelayMs: 10000,
+    // optional: only retry on specific errors
+    shouldRetry: (err) => err instanceof Error && err.message.includes("429"),
+  },
+  onRetry: ({ speaker, attempt, maxAttempts, error, delayMs }) => {
+    console.warn(`[${speaker}] attempt ${attempt}/${maxAttempts} failed — retrying in ${delayMs}ms`);
+  },
+});
+
+// Or listen via events
+convo.on("retry", ({ speaker, attempt, error }) => {
+  console.warn(`[${speaker}] retry #${attempt}:`, error);
+});
+
+// If all attempts are exhausted, 'error' fires and conversation stops
+convo.on("error", ({ error, speaker }) => {
+  console.error(`[${speaker}] fatal:`, error);
+});
+
+// stopped.reason will be "error" when retries are exhausted
+convo.on("stopped", ({ reason }) => {
+  if (reason === "error") console.log("Conversation ended due to a fatal LLM error.");
+});
+```
+
+> **UI note:** On a retry the previously streamed tokens for that turn are discarded.
+> If you render tokens live, clear the active message bubble when you receive the `"retry"` event.
+
+### 5. Interrupt Mode
 
 Users can interrupt ongoing LLM generation mid-stream.
 
@@ -378,10 +443,37 @@ interface ConversationHandle {
 
 type LoopState = "idle" | "streaming" | "awaiting-human" | "stopped";
 
+type ConversationStoppedReason =
+  | "maxTurns"      // reached maxTurns cap
+  | "stop"          // stop() called explicitly
+  | "stopSequence"  // stopSequence string was generated
+  | "error";        // all retry attempts exhausted
+
 type SendResult = {
   intent: "inject" | "interrupt";
   turnIndex: number;
 };
+
+// ─── Retry types
+
+type RetryBackoff = "none" | "linear" | "exponential";
+
+interface RetryOptions {
+  maxAttempts?: number;       // default 1 (no retries)
+  backoff?: RetryBackoff;     // default "exponential"
+  initialDelayMs?: number;    // default 1000
+  maxDelayMs?: number;        // default 30000
+  shouldRetry?: (err: unknown, attempt: number) => boolean;
+}
+
+interface RetryContext {
+  speaker: string;
+  turnIndex: number;
+  attempt: number;      // 1-based retry count
+  maxAttempts: number;
+  error: unknown;
+  delayMs: number;      // back-off sleep before next attempt
+}
 ```
 
 ## License
