@@ -2,6 +2,23 @@
 
 > Multi-agent conversation loop with human-in-the-loop support.
 
+**@ekaone/n-agent** is a lightweight, provider-agnostic TypeScript library for orchestrating structured conversations between multiple AI agents. It gives you a simple, turn-based loop where any number of LLM-powered agents take part in a discussion, with built-in support for real-time token streaming, human participation, mid-stream interruption, and automatic error recovery.
+
+Whether you're building an autonomous debate, a moderated Q&A, a co-writing workflow, or a live CLI chatbot, `n-agent` handles the conversation plumbing so you can focus on your agents' logic.
+
+## Features
+
+- 🤖 **Multi-agent rotation** — register any number of LLM or human agents; the loop handles turn ordering automatically
+- 🌊 **Real-time token streaming** — receive each token as it arrives via callbacks or typed events
+- 🙋 **Human-in-the-loop** — pause the loop for human input at any turn or on a custom condition
+- ⚡ **Mid-stream interruption** — users can inject a message or abort the current LLM turn at any time
+- 🔁 **Retry & error recovery** — automatically retry failed turns with configurable back-off (none / linear / exponential) and a custom retry filter
+- 🛑 **Stop sequences** — halt the conversation the moment an agent generates a specific string
+- 📡 **Typed event emitter** — attach multiple independent listeners (CLI, logging, UI, persistence) without composing callbacks
+- 🔌 **Pluggable adapters** — ships with Anthropic and Vercel AI SDK adapters; bring your own for any other provider
+- 🪶 **Zero runtime dependencies** — the core package has no required dependencies; adapters are optional peer deps
+- 🔒 **Strict TypeScript** — full type safety end-to-end, including events and adapter contracts
+
 [![npm version](https://img.shields.io/npm/v/@ekaone/n-agent.svg)](https://www.npmjs.com/package/@ekaone/n-agent)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.0+-blue.svg)](https://www.typescriptlang.org/)
