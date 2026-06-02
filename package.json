@@ -1,6 +1,6 @@
 {
   "name": "@ekaone/n-agent",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Multi-agent conversation loop with human-in-the-loop support.",
   "keywords": [
     "agent",

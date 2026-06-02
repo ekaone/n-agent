@@ -37,6 +37,39 @@ export type ChatAgent = {
   adapter?: AgentAdapter; // undefined when type === 'human'
 };
 
+// ─── Retry
+
+export type RetryBackoff = "none" | "linear" | "exponential";
+
+export type RetryOptions = {
+  /** Total attempts including the first try. Default: 1 (no retries). */
+  maxAttempts?: number;
+  /** Back-off strategy between attempts. Default: "exponential". */
+  backoff?: RetryBackoff;
+  /** Base delay in ms (first retry). Default: 1000. */
+  initialDelayMs?: number;
+  /** Upper bound on delay in ms. Default: 30_000. */
+  maxDelayMs?: number;
+  /** Return false to stop retrying before maxAttempts is reached. */
+  shouldRetry?: (err: unknown, attempt: number) => boolean;
+};
+
+/**
+ * Passed to `onRetry` and emitted as the `"retry"` event.
+ * Note: previously streamed tokens for this turn have been discarded.
+ * UIs rendering tokens live should clear the active message bubble on this event.
+ */
+export type RetryContext = {
+  speaker: string;
+  turnIndex: number;
+  /** 1-based retry count (1 = first retry, not the initial attempt). */
+  attempt: number;
+  maxAttempts: number;
+  error: unknown;
+  /** Sleep duration in ms before the next attempt. */
+  delayMs: number;
+};
+
 // ─── Turn Context
 // Passed to pauseCondition so users can write expressive pause logic.
 
@@ -75,14 +108,16 @@ export type ConversationOptions = {
   stopSequence?: string; // e.g. '[DONE]' — auto-calls stop()
   pauseCondition?: (ctx: TurnContext) => boolean;
   delayMs?: number; // optional delay between turns (ms)
+  retry?: RetryOptions;
   onToken?: (chunk: string, speaker: string) => void;
   onTurnComplete?: (turn: ChatMessage) => void;
   onStateChange?: (state: LoopState) => void;
+  onRetry?: (ctx: RetryContext) => void;
 };
 
 // ─── Conversation Events ──────────────────────────────────────────────────────
 
-export type ConversationStoppedReason = "maxTurns" | "stop" | "stopSequence";
+export type ConversationStoppedReason = "maxTurns" | "stop" | "stopSequence" | "error";
 export type HumanAwaitingReason = "humanTurn" | "pauseCondition";
 
 export type ConversationEventMap = {
@@ -93,6 +128,7 @@ export type ConversationEventMap = {
   humanAwaiting: { turnIndex: number; reason: HumanAwaitingReason };
   stopped: { reason: ConversationStoppedReason; turnIndex: number | null };
   error: { error: unknown; speaker?: string; turnIndex?: number };
+  retry: RetryContext;
 };
 
 export type ConversationEventName = keyof ConversationEventMap;
